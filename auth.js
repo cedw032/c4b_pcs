@@ -2,7 +2,7 @@ module.exports = {
 	isEndClient: socket => {
 		console.log(socket.handshake.headers.referer);
 		/*return socket.handshake.headers.referer === 'http://localhost:3000/';*/
-		return socket.handshake.headers.referer === 'https://https://cedw032.github.io/c4b_cw/build/';
+		return socket.handshake.headers.referer === ' https://cedw032.github.io/c4b_cw/build/';
 	},
 
 	isBusinessClient: socket => {
