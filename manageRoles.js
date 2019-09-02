@@ -147,12 +147,14 @@ module.exports = (io, auth) => {
 		}
 
 		if (auth.isBusinessClient(socket)) {
+			console.log('CONNECTING BUSINESS CLIENT');
 			changeRole(roles.businessNotSignedIn);
 			broadcastIsBusinessAvailable();
 			return;
 		};
 
 		if (auth.isEndClient(socket)) {
+			console.log('CONNECTING END CLIENT');
 			changeRole(roles.endClientGuest);
 			broadcastEndClients();
 			return;
