@@ -1,7 +1,9 @@
 const express = require('express')
 var app = express();
 var http = require('http').createServer(app);
-var io = require('socket.io')(http);
+var io = require('socket.io')(http, {
+	pingTimeout: 20000
+});
 
 const auth = require('./auth');
 const manageRoles = require('./manageRoles');

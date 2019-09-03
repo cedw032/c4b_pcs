@@ -2,128 +2,204 @@ const moment = require('moment');
 
 module.exports = (io, auth) => {
 
-	let sockets = {
-		businessSignedIn: {},
-		endClientGuest: {},
-	}
+	const businessClients = {};
+	const endClients = {};
 
-	let endClientSocketsAllocated = 0;
+	const sockets = [];
+	let socketsAllocated = 0;
+
+	const forEachInGroup = (task, group) => {
+		Object.values(group).forEach(socketIds => {
+			socketIds.forEach(socketId => task(sockets[socketId]));
+		});
+	};
 
 	const forEachBusinessSocket = task => {
-		Object.entries(sockets.businessSignedIn).forEach(([username, sockets]) => {
-			sockets.forEach(socket => task(socket));
-		});
-	}
+		console.log('TASK', task, typeof task);
+		forEachInGroup(task, businessClients);
+	};
+
+	const forEachEndSocket = task => {
+		forEachInGroup(task, endClients);
+	};
 
 	const broadcastEndClients = () => {
-		const endClients = Object.keys(sockets.endClientGuest);
-		forEachBusinessSocket(socket => socket.emit('endClients', endClients));
-	}
+		forEachBusinessSocket(
+			socket => socket.emit('endClients', Object.keys(endClients))
+		);
+	};
 
 	const broadcastIsBusinessAvailable = () => {
-		Object.entries(sockets.endClientGuest).forEach(([id, socket]) => {
-			console.log('EMITTING RESPONSE YEYE');
-
-			//console.log('bIN', sockets.businessSignedIn);
-
-			const isBusinessAvailable = Object.entries(sockets.businessSignedIn).reduce(
-				(isBusinessAvailable, [id ,sockets]) => /*console.log('IDDSSSSS', id, sockets) || */isBusinessAvailable || !!sockets.length,
-				false
-			)
-
-			socket.emit(
+		forEachEndSocket(
+			socket => socket.emit(
 				'isBusinessAvailable', 
-				isBusinessAvailable,
+				!!Object.keys(businessClients).length,
 			)
-		})
-	}
+		);
+	};
+
+	const forGroupMemberSockets = (clientId, group, task) => {
+		const socketIds = group[clientId];
+		socketIds.forEach(socketId => {
+			task(sockets[socketId]);
+		});
+	};
 
  	io.on('connection', socket => {
 
  		let role;
+ 		let clientId;
+ 		let socketId;
 
- 		let username;
- 		let endClientId;
+ 		const allocateSocket = () => {
+ 			socketId = socketsAllocated++;
+ 			sockets[socketId] = socket;
+ 		};
+
+ 		const deallocataeSocket = () => {
+ 			delete sockets[socketId];
+ 		};
+
+ 		const addToGroup = group => {
+
+ 			console.log('ADDING TO GROUP', clientId, socketId);
+
+ 			group[clientId] = [
+				...(group[clientId] || []),
+				socketId
+			];
+ 		};
+
+ 		const removeFromGroup = group => {
+ 			group[clientId] = group[clientId].filter(
+ 				existing => existing !== socketId
+			);
+
+			if (!group[clientId].length) {
+				delete group[clientId];
+			}
+ 		};
+
+ 		const emitMessage = (socket, message) => {
+ 			console.log('EMITTING MESSAGE HARD', clientId);
+ 			socket.emit(
+				'message',
+				{
+					content: message.content,
+					at: moment().toISOString(),
+					from: clientId,
+				}
+			)
+		};
+
+		const emitBusinessMessage = (socket, message) => {
+ 			console.log('EMITTING MESSAGE HARD', clientId);
+ 			socket.emit(
+				'message',
+				{
+					content: message.content,
+					at: moment().toISOString(),
+					from: clientId,
+					isBusiness: true,
+				}
+			)
+		};
 
  		const roles = {
 			businessNotSignedIn: {
 				login: credentials => {
-
-					console.log('CREDIENTIAL', credentials);
 
 					if (!auth.isBusinessLogin(credentials)) {
 						socket.emit('login', 'Not business login');
 						return;
 					}
 
-					console.log('AAAA');
-					changeRole(roles.businessSignedIn, credentials);
+					clientId = credentials.username;
+					changeRole(roles.businessSignedIn);
+
 					socket.emit('login');
 				},
 			},
 
 			businessSignedIn: {
 				connect: credentials => {
-					username = credentials.username;
+					allocateSocket();
+					addToGroup(businessClients);
 
-					sockets.businessSignedIn[username] = [
-						...(sockets.businessSignedIn[username] || []),
-						socket
-					];
+					console.log('BUSINESS CLIENTS', businessClients)
 
 					broadcastEndClients();
 					broadcastIsBusinessAvailable();
 				},
 
 				message: message => {
-					const receiver = sockets.endClientGuest[message.to];
-					if (receiver) {
-						receiver.emit('message', {
-							content: message.content,
-							at: moment(),
-							from: username,
-						});
-					}
+					forGroupMemberSockets(
+						message.to,
+						endClients,
+						socket => emitMessage(socket, message)
+					)
+
+					console.log('REFLECTING BACK');
+					forEachBusinessSocket(
+						receiver => {
+							if (receiver === socket) return;
+							emitBusinessMessage(receiver, message);
+						}
+					);
 				},
 
 				disconnect: () => {
-					sockets.businessSignedIn[username] = sockets.businessSignedIn[username].filter(
-						businessSignedIn => businessSignedIn !== socket
-					);
+					deallocataeSocket();
+					removeFromGroup(businessClients)
 
 					broadcastIsBusinessAvailable();
 				},
 			},
 
-			endClientGuest: {
-				connect: () => {
-					console.log('THIS?');
-					endClientId = endClientSocketsAllocated++;
-					sockets.endClientGuest[endClientId] = socket;
+			endClientWithoutId: {
+				id: id => {
+					console.log('RECEIVING ID', id);
+					clientId = id;
+					changeRole(roles.endClientWithId)
+				}
+			},
+
+			endClientWithId: {
+				connect: id => {
+					allocateSocket();
+					addToGroup(endClients)
+					console.log('ADDING TO END CLIENTS', endClients);
+
 					broadcastEndClients();
 					broadcastIsBusinessAvailable();
-					console.log('END USER CONNECTED');
 				},
 
 				message: message => {
 					forEachBusinessSocket(
-						socket => console.log('emiting message', message) || socket.emit('message', {
-							content: message.content,
-							at: moment(),
-							from: endClientId,
-						})
+						socket => console.log('EMITTING MESSAGE') || emitMessage(socket, message)
 					);
+
+					forGroupMemberSockets(
+						clientId,
+						endClients,
+						receiver => {
+							if (receiver === socket) return;
+							emitMessage(receiver, message);
+						}
+					)
 				},
 
 				disconnect: () => {
-					delete sockets.endClientGuest[endClientId];
+					deallocataeSocket();
+					removeFromGroup(endClients);
+
 					broadcastEndClients();
 				},
-			}
+			},
 
 		};
 
- 		const changeRole = (newRole, connectParam) => {
+ 		const changeRole = (newRole) => {
 
  			const exitRole = () => {
 				Object.entries(role).forEach(([type, listener]) => {
@@ -138,7 +214,7 @@ module.exports = (io, auth) => {
 					socket.on(type, listener);
 				});
 				role = newRole;
-				if (newRole.connect) newRole.connect(connectParam);
+				if (newRole.connect) newRole.connect();
 				
 			}
 
@@ -147,15 +223,13 @@ module.exports = (io, auth) => {
 		}
 
 		if (auth.isBusinessClient(socket)) {
-			console.log('CONNECTING BUSINESS CLIENT');
 			changeRole(roles.businessNotSignedIn);
 			broadcastIsBusinessAvailable();
 			return;
 		};
 
 		if (auth.isEndClient(socket)) {
-			console.log('CONNECTING END CLIENT');
-			changeRole(roles.endClientGuest);
+			changeRole(roles.endClientWithoutId);
 			broadcastEndClients();
 			return;
 		};
